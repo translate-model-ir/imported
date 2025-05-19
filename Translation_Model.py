@@ -1,353 +1,172 @@
-
-
-
 import streamlit as st
-import pandas as pd
+from google.cloud import bigquery
 import numpy as np
-from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
+from sentence_transformers import SentenceTransformer
 from googletrans import Translator
-import gdown # <-- Import gdown
-import os # <-- Import os to check if file exists
+import pandas as pd
 
-# --- Constants ---
+# --- Initialize the Sentence Transformer model and translator ---
 MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
-TOP_K = 30
-# PKL_FILE = "paragraphs_with_embeddings_v2.pkl" # <-- Comment out or remove old PKL_FILE
-# --- IMPORTANT: Replace 'YOUR_GOOGLE_DRIVE_FILE_ID' with the actual ID of your PKL file ---
-# Or you can use the full shareable URL if you prefer, gdown can often handle it.
-# Example using File ID:
-GOOGLE_DRIVE_FILE_ID = "1-d46DU4g3LpWUl3B0zgCkvWa9pYkeQe4" # e.g., "123AbcXYZ789..."
-# Example using full URL (make sure it's a direct download link or shareable link):
-# GOOGLE_DRIVE_FILE_URL = "https://drive.google.com/file/d/1-d46DU4g3LpWUl3B0zgCkvWa9pYkeQe4/view?usp=drive_link"
-LOCAL_PKL_FILE_NAME = "downloaded_paragraphs_with_embeddings_v2.pkl" # Local name for the downloaded file
-
-SIMILARITY_THRESHOLD = 0.4
-
-
-# --- UI Config (Optional - you had this commented out, uncomment if needed) ---
-# st.title("🔍 Multilingual Paragraph Search")
-# st.subheader("Built for PDF content in 2-column layout")
-# query = st.text_input("Enter a detailed query (minimum 5 words):")
-# threshold = st.slider(
-#     "Similarity Threshold (lower = more results, higher = more relevant)",
-#     min_value=0.1,
-#     max_value=0.9,
-#     value=0.4,
-#     step=0.05
-# )
-
-
-# --- Init ---
-@st.cache_resource
-def load_model():
-    return SentenceTransformer(MODEL_NAME)
-
-@st.cache_data
-def load_dataset():
-    # --- Download from Google Drive if not already downloaded ---
-    if not os.path.exists(LOCAL_PKL_FILE_NAME):
-        st.info(f"Downloading dataset from Google Drive (this may take a moment)...")
-        try:
-            # Using file ID:
-            gdown.download(id=GOOGLE_DRIVE_FILE_ID, output=LOCAL_PKL_FILE_NAME, quiet=False)
-            # Or using URL:
-            # gdown.download(url=GOOGLE_DRIVE_FILE_URL, output=LOCAL_PKL_FILE_NAME, quiet=False)
-            st.success("Dataset downloaded successfully!")
-        except Exception as e:
-            st.error(f"Error downloading file from Google Drive: {e}")
-            st.error("Please ensure the Google Drive File ID is correct and the file is shared with 'Anyone with the link'.")
-            return pd.DataFrame() # Return empty DataFrame on error
-    else:
-        st.info("Dataset already downloaded. Loading from local cache.")
-
-    try:
-        return pd.read_pickle(LOCAL_PKL_FILE_NAME)
-    except Exception as e:
-        st.error(f"Error reading the PKL file: {e}")
-        return pd.DataFrame() # Return empty DataFrame on error
-
-
-model = load_model()
+model = SentenceTransformer(MODEL_NAME)
 translator = Translator()
-df = load_dataset()
-
-# --- App UI ---
-st.title(" 🌐 Multilingual Paragraph Search")
-st.markdown("📄 Search through multilingual technical documents (belonging to 'ZS115670_', '47797881_ series'), having 2 column layout.")
-
-query = st.text_input("Enter search query (at least 6 words):")
-# translate_toggle = st.checkbox("🔁 Include translated paragraph (optional)", value=False)
-
-if st.button("🔍 Search"):
-    if df.empty: # Check if DataFrame is empty (e.g., due to download error)
-        st.error("Dataset could not be loaded. Please check the logs or try again.")
-    elif not query or len(query.strip().split()) < 6:
-        st.warning("Please enter a search query with more than 5 words.")
-    else:
-        query_embedding = model.encode(query)
-        # Ensure 'embedding' column exists and is not empty before proceeding
-        if 'embedding' not in df.columns or df['embedding'].isnull().all():
-            st.error("The 'embedding' column is missing or empty in the dataset.")
-        else:
-            try:
-                para_embeddings = np.vstack(df['embedding'].dropna().to_numpy()) # Add .dropna() just in case
-                if para_embeddings.ndim == 1: # Handle case where only one valid embedding exists
-                    para_embeddings = para_embeddings.reshape(1, -1)
-
-                if para_embeddings.shape[0] == 0: # No valid embeddings found
-                    st.info("No embeddings available in the dataset to compare with.")
-                else:
-                    scores = cosine_similarity([query_embedding], para_embeddings)[0]
-
-                    df_temp = df.dropna(subset=['embedding']).copy() # Work on a copy with no NaN embeddings
-                    # Ensure scores align with df_temp if there were NaNs
-                    if len(scores) == len(df_temp):
-                        df_temp['score'] = scores
-                        df_filtered = df_temp[df_temp['score'] >= SIMILARITY_THRESHOLD]
-                        df_top = df_filtered.sort_values(by="score", ascending=False).head(TOP_K).copy()
-
-                        if df_top.empty:
-                            st.info("No matching paragraphs found for the given threshold.")
-                        else:
-                            st.success(f"Found {len(df_top)} matching paragraphs.")
-
-                            # Display table
-                            display_cols = ["doc_name", "page_number", "paragraph", "language", "score"]
-                            st.dataframe(df_top[display_cols], use_container_width=True)
-
-                            # Download
-                            def convert_df_to_csv(df_export):
-                                return df_export.to_csv(index=False, encoding="utf-8-sig")
-
-                            csv = convert_df_to_csv(df_top[display_cols])
-                            st.download_button(
-                                label="📥 Download results as CSV",
-                                data=csv,
-                                file_name="filtered_paragraphs.csv",
-                                mime="text/csv"
-                            )
-                    else:
-                        st.error("Mismatch between scores and dataframe rows. This might be due to NaN embeddings.")
-            except Exception as e:
-                st.error(f"An error occurred during search: {e}")
-
-
-
-
-
-
-
-
-
-###################################
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# import streamlit as st
-# import pandas as pd
-# import numpy as np
-# from sentence_transformers import SentenceTransformer
-# from sklearn.metrics.pairwise import cosine_similarity
-# from googletrans import Translator
-
-# # --- Constants ---
-# MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
-# TOP_K = 30
-# PKL_FILE = "paragraphs_with_embeddings_v2.pkl"
-# SIMILARITY_THRESHOLD = 0.4
-
-
-# # # --- UI Config ---
-# # st.title("🔍 Multilingual Paragraph Search")
-# # st.subheader("Built for PDF content in 2-column layout")
-
-# # query = st.text_input("Enter a detailed query (minimum 5 words):")
-
-# # # 👇 Add this slider to let user choose similarity threshold
-# # threshold = st.slider(
-# #     "Similarity Threshold (lower = more results, higher = more relevant)", 
-# #     min_value=0.1, 
-# #     max_value=0.9, 
-# #     value=0.4, 
-# #     step=0.05
-# # )
-
-
-
-# # --- Init ---
-# @st.cache_resource
-# def load_model():
-#     return SentenceTransformer(MODEL_NAME)
-
-# @st.cache_data
-# def load_dataset():
-#     return pd.read_pickle(PKL_FILE)
-
-# model = load_model()
-# translator = Translator()
-# df = load_dataset()
-
-# # --- App UI ---
-# st.title(" 🌐 Multilingual Paragraph Search")
-# st.markdown("📄 Search through multilingual technical documents (belonging to 'ZS115670_', '47797881_ series'), having 2 column layout.")
-
-# query = st.text_input("Enter search query (at least 6 words):")
-# # translate_toggle = st.checkbox("🔁 Include translated paragraph (optional)", value=False)
-
-# if st.button("🔍 Search"):
-
-#     if not query or len(query.strip().split()) < 6:
-#         st.warning("Please enter a search query with more than 5 words.")
-#     else:
-#         query_embedding = model.encode(query)
-#         para_embeddings = np.vstack(df['embedding'].to_numpy())
-#         scores = cosine_similarity([query_embedding], para_embeddings)[0]
-
-#         df['score'] = scores
-#         df_filtered = df[df['score'] >= SIMILARITY_THRESHOLD]
-#         df_top = df_filtered.sort_values(by="score", ascending=False).head(TOP_K).copy()
-
-#         if df_top.empty:
-#             st.info("No matching paragraphs found.")
-#         else:
-#             st.success(f"Found {len(df_top)} matching paragraphs.")
-            
-#             # Optional Translation
-#             # if translate_toggle:
-#             #     df_top["translated_paragraph"] = df_top["paragraph"].apply(
-#             #         lambda x: translator.translate(x, dest="en").text
-#             #     )
-
-#             # Display table
-#             display_cols = ["doc_name", "page_number", "paragraph", "language", "score"]
-#             # if translate_toggle:
-#             #     display_cols.append("translated_paragraph")
-#             st.dataframe(df_top[display_cols], use_container_width=True)
-
-#             # Download
-#             def convert_df_to_csv(df_export):
-#                 return df_export.to_csv(index=False, encoding="utf-8-sig")
-
-#             csv = convert_df_to_csv(df_top[display_cols])
-#             st.download_button(
-#                 label="📥 Download results as CSV",
-#                 data=csv,
-#                 file_name="filtered_paragraphs.csv",
-#                 mime="text/csv"
-#             )
-
-
-#######################################################
-#changed the script to pull model from another repo below 
-#####################################################
-
-
-# import streamlit as st
-# import pandas as pd
-# import numpy as np
-# from sentence_transformers import SentenceTransformer
-# from sklearn.metrics.pairwise import cosine_similarity
-# from googletrans import Translator
-# import os
-
-# # --- Constants ---
-# MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
-# TOP_K = 30
-# PKL_FILE = "paragraphs_with_embeddings_v2.pkl"  # Path to the .pkl file in the repo
-# SIMILARITY_THRESHOLD = 0.4
-
-# # --- Cached loaders ---
-# @st.cache_resource
-# def load_model():
-#     return SentenceTransformer(MODEL_NAME)
-
-# @st.cache_data
-# def load_dataset():
-#     # Check if the .pkl file exists in the repo directory
-#     if not os.path.exists(PKL_FILE):
-#         st.error(f"Error: The file {PKL_FILE} was not found in the repository.")
-#         raise FileNotFoundError(f"{PKL_FILE} not found.")
-    
-#     # Load the dataset from the local .pkl file
-#     return pd.read_pickle(PKL_FILE)
-
-# # --- Load resources ---
-# model = load_model()
-# translator = Translator()
-
-# # Load the dataset
-# try:
-#     df = load_dataset()
-# except FileNotFoundError:
-#     st.error(f"Could not find the file {PKL_FILE}. Please check the file path and try again.")
-#     st.stop()
-
-# # --- UI ---
-# st.title("🌐 Multilingual Paragraph Search")
-# st.markdown("Search technical documents with multilingual paragraphs (PDFs in 2-column layout).")
-
-# query = st.text_input("Enter a detailed search query (minimum 6 words):")
-# # Uncomment if translation is needed
-# # translate_toggle = st.checkbox("Include translated paragraph", value=False)
-
-# if st.button("🔍 Search"):
-#     if not query or len(query.strip().split()) < 6:
-#         st.warning("Please enter a query with more than 5 words.")
-#     else:
-#         query_embedding = model.encode(query)
-#         para_embeddings = np.vstack(df['embedding'].to_numpy())
-#         scores = cosine_similarity([query_embedding], para_embeddings)[0]
-#         df['score'] = scores
-
-#         df_filtered = df[df['score'] >= SIMILARITY_THRESHOLD]
-#         df_top = df_filtered.sort_values(by="score", ascending=False).head(TOP_K).copy()
-
-#         if df_top.empty:
-#             st.info("No matching paragraphs found.")
-#         else:
-#             st.success(f"Found {len(df_top)} matching paragraphs.")
-
-#             # Uncomment to translate
-#             # if translate_toggle:
-#             #     df_top["translated_paragraph"] = df_top["paragraph"].apply(
-#             #         lambda x: translator.translate(x, dest="en").text
-#             #     )
-
-#             display_cols = ["doc_name", "page_number", "paragraph", "language", "score"]
-#             # if translate_toggle:
-#             #     display_cols.append("translated_paragraph")
-
-#             st.dataframe(df_top[display_cols], use_container_width=True)
-
-#             def convert_df_to_csv(df_export):
-#                 return df_export.to_csv(index=False, encoding="utf-8-sig")
-
-#             csv = convert_df_to_csv(df_top[display_cols])
-
-#             st.download_button(
-#                 label="⬇️ Download results as CSV",
-#                 data=csv,
-#                 file_name="filtered_paragraphs.csv",
-#                 mime="text/csv"
-#             )
-
-
+top_k_matches = 30
+SIMILARITY_THRESHOLD = 0.6
+project_id = "feisty-parity-457910-h8"  # Replace with your GCP project ID
+dataset_name = "corpus"  # set your dataset
+
+
+def search_paragraphs(query, project_id, dataset_name, credentials, top_k=top_k_matches):
+    """
+    Searches for paragraphs in BigQuery that are semantically similar to the query.
+
+    Args:
+        query (str): The search query.
+        project_id (str): Your Google Cloud Project ID.
+        dataset_name (str): The name of the BigQuery dataset.
+        credentials (dict): Google Cloud credentials from Streamlit secrets.
+        top_k (int, optional): The number of top matching paragraphs to return.
+            Defaults to 30.
+
+    Returns:
+        pandas.DataFrame: A DataFrame containing the top matching paragraphs,
+        their scores, and other metadata.
+    """
+    try:
+        client = bigquery.Client(project=project_id, credentials=credentials)
+    except Exception as e:
+        st.error(f"Error initializing BigQuery client: {e}")
+        return None
+
+    # Construct the query to retrieve paragraphs and their embeddings.
+    query_embedding = model.encode(query)
+    sql_query = f"""
+        SELECT
+            doc_name,
+            page_number,
+            paragraph_id,
+            paragraph,
+            language,
+            embedding
+        FROM
+            `{project_id}.{dataset_name}.paragraphs_with_embeddings`
+        """
+    try:
+        query_job = client.query(sql_query)
+        results = query_job.result().to_dataframe()
+    except Exception as e:
+        st.error(f"Error querying BigQuery: {e}")
+        return None
+
+    if results.empty:
+        st.warning("No paragraphs found in BigQuery.")
+        return pd.DataFrame()
+
+    # Convert the embedding from a list to a numpy array
+    results["embedding"] = results["embedding"].apply(lambda x: np.array(x))
+
+    para_embeddings = np.vstack(results["embedding"].to_numpy())
+    scores = cosine_similarity([query_embedding], para_embeddings)[0]
+    results["score"] = scores
+    df_filtered = results[results["score"] >= SIMILARITY_THRESHOLD]
+    df_top = df_filtered.sort_values(by="score", ascending=False).head(top_k).copy()
+    st.write(f"\n🔍 Top {len(df_top)} matches for query: '{query}'\n")
+    if df_top.empty:
+        st.warning("No matching paragraphs found.")
+        return pd.DataFrame()
+
+    return df_top
+
+
+def filter_best_per_language(df_results, original_query, project_id, dataset_name, credentials):
+    """
+    Filters the search results to find the best matching paragraph for each language.
+
+    Args:
+        df_results (pandas.DataFrame): The DataFrame returned by search_paragraphs.
+        original_query (str): The original search query.
+        project_id (str): Your Google Cloud Project ID.
+        dataset_name (str): The name of the BigQuery dataset.
+        credentials (dict): Google Cloud credentials from Streamlit secrets.
+
+    Returns:
+        pandas.DataFrame: A DataFrame containing the best matching paragraph for
+        each language.
+    """
+    if df_results.empty:
+        st.warning("No results found for the query!")
+        return df_results
+    client = bigquery.Client(project=project_id, credentials=credentials)
+    translated_query = translator.translate(original_query, dest="en").text
+    translated_query_embedding = model.encode(translated_query)
+    ref_page = df_results.iloc[0]["page_number"]
+    best_by_lang = {}
+
+    for _, row in df_results.iterrows():
+        para = row["paragraph"]
+        lang = row["language"]
+        if abs(row["page_number"] - ref_page) > 3:
+            continue
+        try:
+            translated_para = translator.translate(para, dest="en").text
+            translated_para_embedding = model.encode(translated_para)
+            sim = cosine_similarity(
+                [translated_query_embedding], [translated_para_embedding]
+            )[0][0]
+            if lang not in best_by_lang or sim > best_by_lang[lang]["similarity"]:
+                best_by_lang[lang] = {
+                    "row": row,
+                    "translated": translated_para,
+                    "similarity": sim,
+                }
+        except Exception as e:
+            st.error(f"⚠️ Translation failed for lang {lang}: {e}")
+            continue
+    filtered_rows = [entry["row"] for entry in best_by_lang.values()]
+    df_filtered = pd.DataFrame(filtered_rows)
+    df_filtered["translated_paragraph"] = df_filtered["paragraph"].apply(
+        lambda para: translator.translate(para, dest="en").text
+    )
+    st.write(f"\n🌍 Filtered top matching paragraph per language:\n")
+    return df_filtered
+
+
+def main():
+    st.title("BigQuery Paragraph Search")
+    st.write("Enter a query to search for similar paragraphs in BigQuery.")
+
+    # Get credentials from Streamlit secrets
+    try:
+        gcp_credentials = st.secrets["gcp_credentials"]
+    except KeyError:
+        st.error("Please configure your Google Cloud credentials in Streamlit secrets.")
+        return
+
+    # Search box
+    search_query = st.text_area(
+        "Enter your query (CZECH EXAMPLE):",
+        """Kompresor se obvykle dodává v polyethylenovém nebo jiném
+obalu. Pokud použijete k odstranění obalu nůž, dejte pozor,
+abyste nepoškodili vnější nátěr kompresoru""",
+    )
+
+    if st.button("Search"):
+        if not search_query:
+            st.warning("Please enter a search query.")
+            return
+
+        # Search from BigQuery
+        df_results = search_paragraphs(
+            search_query, project_id, dataset_name, gcp_credentials
+        )
+        if df_results is not None and not df_results.empty:
+            df_filtered = filter_best_per_language(
+                df_results, search_query, project_id, dataset_name, gcp_credentials
+            )
+            st.dataframe(df_filtered)
+        elif df_results is not None:
+            st.write("No results to display.")
+
+
+if __name__ == "__main__":
+    main()
