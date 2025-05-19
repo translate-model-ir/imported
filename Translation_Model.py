@@ -7,8 +7,10 @@ from googletrans import Translator
 import pandas as pd
 
 # --- Initialize the Sentence Transformer model and translator ---
+
 MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
-model = SentenceTransformer(MODEL_NAME)
+model = SentenceTransformer(MODEL_NAME, device='cpu')
+
 translator = Translator()
 top_k_matches = 30
 SIMILARITY_THRESHOLD = 0.6
